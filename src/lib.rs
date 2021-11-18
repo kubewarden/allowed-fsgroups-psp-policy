@@ -1,4 +1,4 @@
-use lazy_static::lazy_static;
+use anyhow::{anyhow, Result};
 
 extern crate wapc_guest as guest;
 use guest::prelude::*;
@@ -6,19 +6,10 @@ use guest::prelude::*;
 use k8s_openapi::api::core::v1 as apicore;
 
 extern crate kubewarden_policy_sdk as kubewarden;
-use kubewarden::{logging, protocol_version_guest, request::ValidationRequest, validate_settings};
+use kubewarden::{protocol_version_guest, request::ValidationRequest, validate_settings};
 
 mod settings;
-use settings::Settings;
-
-use slog::{info, o, warn, Logger};
-
-lazy_static! {
-    static ref LOG_DRAIN: Logger = Logger::root(
-        logging::KubewardenDrain::new(),
-        o!("policy" => "sample-policy")
-    );
-}
+use settings::{Ranges, Rule, Settings};
 
 #[no_mangle]
 pub extern "C" fn wapc_init() {
@@ -27,38 +18,85 @@ pub extern "C" fn wapc_init() {
     register_function("protocol_version", protocol_version_guest);
 }
 
+#[derive(Debug, PartialEq)]
+enum PolicyResponse {
+    Accept,
+    Reject(String),
+    Mutate(serde_json::Value),
+}
+
 fn validate(payload: &[u8]) -> CallResult {
     let validation_request: ValidationRequest<Settings> = ValidationRequest::new(payload)?;
 
-    info!(LOG_DRAIN, "starting validation");
+    let pod = match serde_json::from_value::<apicore::Pod>(validation_request.request.object) {
+        Ok(pod) => pod,
+        Err(_) => return kubewarden::accept_request(),
+    };
 
-    // TODO: you can unmarshal any Kubernetes API type you are interested in
-    match serde_json::from_value::<apicore::Pod>(validation_request.request.object) {
-        Ok(pod) => {
-            // TODO: your logic goes here
-            if pod.metadata.name == Some("invalid-pod-name".to_string()) {
-                let pod_name = pod.metadata.name.unwrap();
-                info!(
-                    LOG_DRAIN,
-                    "rejecting pod";
-                    "pod_name" => &pod_name
-                );
-                kubewarden::reject_request(
-                    Some(format!("pod name {} is not accepted", &pod_name)),
-                    None,
-                )
+    let settings = validation_request.settings;
+
+    match do_validate(pod, settings)? {
+        PolicyResponse::Accept => kubewarden::accept_request(),
+        PolicyResponse::Reject(message) => kubewarden::reject_request(Some(message), None),
+        PolicyResponse::Mutate(mutated_object) => kubewarden::mutate_request(mutated_object),
+    }
+}
+
+fn do_validate(pod: apicore::Pod, settings: settings::Settings) -> Result<PolicyResponse> {
+    let pod_spec = pod.spec.ok_or_else(|| anyhow!("invalid pod spec"))?;
+
+    match settings.rule {
+        Rule::MustRunAs(ranges) => {
+            let pod_with_defaulted_fs_group = apicore::Pod {
+                spec: Some(apicore::PodSpec {
+                    security_context: Some(apicore::PodSecurityContext {
+                        fs_group: Some(
+                            ranges.ranges.first().unwrap().min, // It is safe to unwrap here because the settings
+                                                                // validation ensure that there is at least one range
+                                                                // in the list
+                        ),
+                        ..apicore::PodSecurityContext::default()
+                    }),
+                    ..pod_spec
+                }),
+                ..pod
+            };
+            if let Some(security_context) = pod_spec.security_context {
+                match security_context.fs_group {
+                    Some(fs_group) => Ok(validate_fs_group(fs_group, ranges)),
+                    None => Ok(PolicyResponse::Mutate(serde_json::to_value(
+                        pod_with_defaulted_fs_group,
+                    )?)),
+                }
             } else {
-                info!(LOG_DRAIN, "accepting resource");
-                kubewarden::accept_request()
+                Ok(PolicyResponse::Mutate(serde_json::to_value(
+                    pod_with_defaulted_fs_group,
+                )?))
             }
         }
-        Err(_) => {
-            // TODO: handle as you wish
-            // We were forwarded a request we cannot unmarshal or
-            // understand, just accept it
-            warn!(LOG_DRAIN, "cannot unmarshal resource: this policy does not know how to evaluate this resource; accept it");
-            kubewarden::accept_request()
+        Rule::MayRunAs(ranges) => {
+            if let Some(security_context) = pod_spec.security_context {
+                match security_context.fs_group {
+                    Some(fs_group) => Ok(validate_fs_group(fs_group, ranges)),
+                    None => Ok(PolicyResponse::Accept),
+                }
+            } else {
+                Ok(PolicyResponse::Accept)
+            }
         }
+        Rule::RunAsAny => Ok(PolicyResponse::Accept),
+    }
+}
+
+fn validate_fs_group(fs_group: i64, ranges: Ranges) -> PolicyResponse {
+    if ranges
+        .ranges
+        .iter()
+        .any(|range| fs_group >= range.min && fs_group <= range.max)
+    {
+        PolicyResponse::Accept
+    } else {
+        PolicyResponse::Reject(format!("fsGroup {} is not included in any range", fs_group))
     }
 }
 
@@ -66,63 +104,396 @@ fn validate(payload: &[u8]) -> CallResult {
 mod tests {
     use super::*;
 
-    use kubewarden_policy_sdk::test::Testcase;
+    use settings::Range;
 
     #[test]
-    fn accept_pod_with_valid_name() -> Result<(), ()> {
-        let request_file = "test_data/pod_creation.json";
-        let tc = Testcase {
-            name: String::from("Valid name"),
-            fixture_file: String::from(request_file),
-            expected_validation_result: true,
-            settings: Settings {},
-        };
-
-        let res = tc.eval(validate).unwrap();
-        assert!(
-            res.mutated_object.is_none(),
-            "Something mutated with test case: {}",
-            tc.name,
+    fn run_as_any_always_accepts() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec::default()),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::RunAsAny
+                }
+            )?,
+            PolicyResponse::Accept
         );
 
         Ok(())
     }
 
     #[test]
-    fn reject_pod_with_invalid_name() -> Result<(), ()> {
-        let request_file = "test_data/pod_creation_invalid_name.json";
-        let tc = Testcase {
-            name: String::from("Bad name"),
-            fixture_file: String::from(request_file),
-            expected_validation_result: false,
-            settings: Settings {},
-        };
-
-        let res = tc.eval(validate).unwrap();
-        assert!(
-            res.mutated_object.is_none(),
-            "Something mutated with test case: {}",
-            tc.name,
+    fn may_run_as_accepts_with_empty_security_context() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec::default()),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MayRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
         );
 
         Ok(())
     }
 
     #[test]
-    fn accept_request_with_non_pod_resource() -> Result<(), ()> {
-        let request_file = "test_data/ingress_creation.json";
-        let tc = Testcase {
-            name: String::from("Ingress creation"),
-            fixture_file: String::from(request_file),
-            expected_validation_result: true,
-            settings: Settings {},
-        };
+    fn may_run_as_accepts_with_empty_fsgroup() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext::default()),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MayRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
+        );
 
-        let res = tc.eval(validate).unwrap();
-        assert!(
-            res.mutated_object.is_none(),
-            "Something mutated with test case: {}",
-            tc.name,
+        Ok(())
+    }
+
+    #[test]
+    fn may_run_as_accepts_with_fsgroup_in_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(1000),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MayRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn may_run_as_accepts_with_fsgroup_in_some_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(1000),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MayRunAs(Ranges {
+                        ranges: vec![
+                            Range { min: 100, max: 200 },
+                            Range {
+                                min: 1000,
+                                max: 2000,
+                            }
+                        ]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn may_run_as_rejects_with_fsgroup_in_no_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(100),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MayRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Reject("fsGroup 100 is not included in any range".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_mutates_with_empty_security_context() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec::default()),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Mutate(serde_json::to_value(apicore::Pod {
+                spec: Some(apicore::PodSpec {
+                    security_context: Some(apicore::PodSecurityContext {
+                        fs_group: Some(1000),
+                        ..apicore::PodSecurityContext::default()
+                    }),
+                    ..apicore::PodSpec::default()
+                }),
+                ..apicore::Pod::default()
+            })?)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_mutates_with_empty_security_context_and_unordered_ranges() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec::default()),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![
+                            Range {
+                                min: 3000,
+                                max: 4000,
+                            },
+                            Range {
+                                min: 1000,
+                                max: 2000,
+                            }
+                        ]
+                    })
+                }
+            )?,
+            PolicyResponse::Mutate(serde_json::to_value(apicore::Pod {
+                spec: Some(apicore::PodSpec {
+                    security_context: Some(apicore::PodSecurityContext {
+                        fs_group: Some(3000),
+                        ..apicore::PodSecurityContext::default()
+                    }),
+                    ..apicore::PodSpec::default()
+                }),
+                ..apicore::Pod::default()
+            })?)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_mutates_with_empty_fsgroup() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext::default()),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Mutate(serde_json::to_value(apicore::Pod {
+                spec: Some(apicore::PodSpec {
+                    security_context: Some(apicore::PodSecurityContext {
+                        fs_group: Some(1000),
+                        ..apicore::PodSecurityContext::default()
+                    }),
+                    ..apicore::PodSpec::default()
+                }),
+                ..apicore::Pod::default()
+            })?)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_mutates_with_empty_fsgroup_and_unordered_ranges() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext::default()),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![
+                            Range {
+                                min: 3000,
+                                max: 4000,
+                            },
+                            Range {
+                                min: 1000,
+                                max: 2000,
+                            }
+                        ]
+                    })
+                }
+            )?,
+            PolicyResponse::Mutate(serde_json::to_value(apicore::Pod {
+                spec: Some(apicore::PodSpec {
+                    security_context: Some(apicore::PodSecurityContext {
+                        fs_group: Some(3000),
+                        ..apicore::PodSecurityContext::default()
+                    }),
+                    ..apicore::PodSpec::default()
+                }),
+                ..apicore::Pod::default()
+            })?)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_accepts_with_fsgroup_in_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(1000),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_accepts_with_fsgroup_in_some_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(1000),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![
+                            Range { min: 100, max: 200 },
+                            Range {
+                                min: 1000,
+                                max: 2000,
+                            }
+                        ]
+                    })
+                }
+            )?,
+            PolicyResponse::Accept
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn must_run_as_rejects_with_fsgroup_in_no_range() -> Result<()> {
+        assert_eq!(
+            do_validate(
+                apicore::Pod {
+                    spec: Some(apicore::PodSpec {
+                        security_context: Some(apicore::PodSecurityContext {
+                            fs_group: Some(100),
+                            ..apicore::PodSecurityContext::default()
+                        }),
+                        ..apicore::PodSpec::default()
+                    }),
+                    ..apicore::Pod::default()
+                },
+                Settings {
+                    rule: Rule::MustRunAs(Ranges {
+                        ranges: vec![Range {
+                            min: 1000,
+                            max: 2000,
+                        }]
+                    })
+                }
+            )?,
+            PolicyResponse::Reject("fsGroup 100 is not included in any range".to_string())
         );
 
         Ok(())

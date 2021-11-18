@@ -1,25 +1,54 @@
-Please, note well: this file and the scaffold were generated from [a
-template](https://github.com/kubewarden/policy-rust-template). Make
-this project yours!
-
 # Kubewarden policy psp-allowed-fsgroups
 
 ## Description
 
-This policy will reject pods that have a name `invalid-pod-name`. If
-the pod to be validated has a different name, or if a different type
-of resource is evaluated, it will be accepted.
+Replacement for the Kubernetes Pod Security Policy that controls the
+usage of `fsGroup` in the pod security context.
 
 ## Settings
 
-This policy has no configurable settings. This would be a good place
-to document if yours does, and what behaviors can be configured by
-tweaking them.
+This policy works by defining what `fsGroup` is allowed in the pod security context.
+
+One of the following setting keys are accepted for this policy:
+
+* `MustRunAs`: contains a list of ranges that define valid ranges for the `fsGroup` value. At least
+  one range must contain the provided `.securityContext.fsGroup`. If the pod does not contain a
+  `.securityContext`, or a `.securityContext.fsGroup`, then this policy acts as mutating and
+  defaults the `fsGroup` attribute to the first `min` value of the list of provided ranges.
+* `MayRunAs`: contains a list of ranges that define valid ranges for the `fsGroup` value. At least
+  one range must contain the provided `.securityContext.fsGroup`. If the pod does not contain a
+  `.securityContext` or a `.securityContext.fsGroup`, then this policy will accept the request.
+* `RunAsAny`: always accepts the request.
+
+Configuration examples:
+
+```yaml
+rule: RunAsAny
+```
+
+```yaml
+rule: MayRunAs
+ranges:
+  - min: 1000
+    max: 2000
+  - min: 3000
+    max: 4000
+```
+
+```yaml
+rule: MustRunAs
+ranges:
+  - min: 1000 # If no fsGroup is set for the pod, the
+              # policy will default it to this value
+    max: 2000
+  - min: 3000
+    max: 4000
+```
 
 ## License
 
 ```
-Copyright (C) 2021 Rafael Fernández López <ereslibre@ereslibre.es>
+Copyright (C) 2021 Rafael Fernández López <rfernandezlopez@suse.com>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
