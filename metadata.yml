@@ -10,8 +10,8 @@ annotations:
   io.kubewarden.policy.title: psp-allowed-fsgroups
   io.kubewarden.policy.description: Replacement for the Kubernetes Pod Security Policy that controls the usage of fsGroups in the pod security context
   io.kubewarden.policy.author: Rafael Fernández López <rfernandezlopez@suse.com>
-  io.kubewarden.policy.url: https://github.com/kubewarden/psp-allowed-fsgroups
-  io.kubewarden.policy.source: https://github.com/kubewarden/psp-allowed-fsgroups
+  io.kubewarden.policy.url: https://github.com/kubewarden/allowed-fsgroups-psp-policy
+  io.kubewarden.policy.source: https://github.com/kubewarden/allowed-fsgroups-psp-policy
   io.kubewarden.policy.license: Apache-2.0
   io.kubewarden.policy.usage: |
     Replacement for the Kubernetes Pod Security Policy that controls the
