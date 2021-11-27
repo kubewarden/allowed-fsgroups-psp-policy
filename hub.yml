@@ -1,6 +1,6 @@
 name: psp-allowed-fsgroups
 description:  Replacement for the Kubernetes Pod Security Policy that controls the usage of fsGroup in the pod security context
-homepage: https://github.com/kubewarden/psp-allowed-fsgroups
+homepage: https://github.com/kubewarden/allowed-fsgroups-psp-policy
 author:
   name: Kubewarden devs
   homepage: https://github.com/kubewarden
