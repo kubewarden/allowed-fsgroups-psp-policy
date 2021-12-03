@@ -28,7 +28,7 @@ jobs:
     needs: test
     env:
       WASM_BINARY_NAME: psp_allowed_fsgroups
-      OCI_TARGET: ghcr.io/kubewarden/policies/psp-allowed-fsgroups
+      OCI_TARGET: ghcr.io/kubewarden/policies/allowed-fsgroups-psp
       METADATA_FILE: metadata.yml
       KWCTL_VERSION: v0.1.9
     steps:

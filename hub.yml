@@ -1,4 +1,4 @@
-name: psp-allowed-fsgroups
+name: allowed-fsgroups-psp
 description:  Replacement for the Kubernetes Pod Security Policy that controls the usage of fsGroup in the pod security context
 homepage: https://github.com/kubewarden/allowed-fsgroups-psp-policy
 author:
@@ -6,7 +6,7 @@ author:
   homepage: https://github.com/kubewarden
 download:
   # Important: leave the __TAG__ around: this is automatically replaced with the value of the git tag
-  registry: ghcr.io/kubewarden/policies/psp-allowed-fsgroups:__TAG__
+  registry: ghcr.io/kubewarden/policies/allowed-fsgroups-psp:__TAG__
   # url is optional
   url: https://github.com/kubewarden/allowed-fsgroups-psp-policy/releases/download/__TAG__/policy.wasm
 keywords:
