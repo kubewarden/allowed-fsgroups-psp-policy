@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "psp-allowed-fsgroups"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "k8s-openapi",
