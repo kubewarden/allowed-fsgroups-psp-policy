@@ -14,10 +14,10 @@ jobs:
     uses: kubewarden/github-actions/.github/workflows/reusable-test-rust.yml@v1
 
   release:
-    needs: test
+    #needs: test
     permissions:
       # Required to push to GHCR
-      contents: read
+      contents: write
       packages: write
       # Required by cosign keyless signing
       id-token: write
@@ -28,3 +28,4 @@ jobs:
       oci-target: ghcr.io/${{ github.repository_owner }}/policies/allowed-fsgroups-psp
     secrets:
       workflow-pat: ${{ secrets.WORKFLOW_PAT }}
+
