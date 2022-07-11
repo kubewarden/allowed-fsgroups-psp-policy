@@ -16,22 +16,19 @@ install: |
   kwctl pull ghcr.io/kubewarden/policies/allowed-fsgroups-psp:v0.1.4
   ```
 keywords:
-  - psp
-  - container
-  - runtime
+- psp
+- container
+- runtime
 links:
-  - name: policy
-    url: https://github.com/kubewarden/allowed-fsgroups-psp-policy/releases/download/v0.1.4/policy.wasm
-  - name: source
-    url: https://github.com/kubewarden/allowed-fsgroups-psp
-changes:
-  - kind: fixed
-    description: Refactoring of Makefile
+- name: policy
+  url: https://github.com/kubewarden/allowed-fsgroups-psp-policy/releases/download/v0.1.4/policy.wasm
+- name: source
+  url: https://github.com/kubewarden/allowed-fsgroups-psp-policy
 provider:
-  name: Kubewarden
+  name: kubewarden
 recommendations:
-  - url: https://artifacthub.io/packages/helm/kubewarden/kubewarden-controller
+- url: https://artifacthub.io/packages/helm/kubewarden/kubewarden-controller
 annotations:
-  kubewarden/resources: "Pod" # Comma separated
-  kubewarden/mutation: "true"
-  kubewarden/contextAware: "false"
+  kubewarden/resources: Pod
+  kubewarden/mutation: true
+  kubewarden/contextAware: false
