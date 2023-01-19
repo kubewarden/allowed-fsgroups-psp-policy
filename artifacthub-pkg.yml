@@ -1,21 +1,21 @@
 # Artifact Hub package metadata file
-version: 0.1.4
+version: 0.1.5
 name: allowed-fsgroups-psp
 displayName: Allowed Fs Groups PSP
-createdAt: 2022-07-11T00:00:00Z
+createdAt: '2023-01-19T14:46:21+02:00'
 description: Replacement for the Kubernetes Pod Security Policy that controls the usage of fsGroup in the pod security context
 license: Apache-2.0
 homeURL: https://github.com/kubewarden/allowed-fsgroups-psp-policy
 containersImages:
   - name: policy
-    image: ghcr.io/kubewarden/policies/allowed-fsgroups-psp:v0.1.4
+    image: ghcr.io/kubewarden/policies/allowed-fsgroups-psp:v0.1.5
 keywords:
 - psp
 - container
 - runtime
 links:
 - name: policy
-  url: https://github.com/kubewarden/allowed-fsgroups-psp-policy/releases/download/v0.1.4/policy.wasm
+  url: https://github.com/kubewarden/allowed-fsgroups-psp-policy/releases/download/v0.1.5/policy.wasm
 - name: source
   url: https://github.com/kubewarden/allowed-fsgroups-psp-policy
 provider:
@@ -26,3 +26,47 @@ annotations:
   kubewarden/resources: Pod
   kubewarden/mutation: true
   kubewarden/contextAware: false
+  kubewarden/rules: |
+    rules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      resources: ["pods"]
+      operations: ["CREATE", "UPDATE"]
+  kubewarden/questions-ui: |
+    questions:
+    - default: RunAsAny
+      tooltip: Set which fsGroup is allowed in the pod security context.
+      description: >-
+        This policy works by defining what `fsGroup` is allowed in the pod security
+        context. `MustRunAs` and `MayRunAs` contain a list of ranges that define
+        valid ranges for the `fsGroup` value. `RunAsAny` always accepts the request.
+      group: Settings
+      label: Service Type
+      options:
+        - MustRunAs
+        - MayRunAs
+        - RunAsAny
+      required: false
+      type: enum
+      variable: rule
+    - default: []
+      tooltip: Valid user ID (UID) ranges for the fsGroup.
+      group: Settings
+      label: User ID Ranges
+      show_if: rule=MustRunAs||rule=MayRunAs
+      hide_input: true
+      type: map[
+      variable: ranges
+      subquestions:
+        - default: 1000
+          tooltip: Minimum UID range for fsgroup.
+          group: Settings
+          label: min
+          type: int
+          variable: ranges.min
+        - default: 2000
+          tooltip: Maximum UID range for fsgroup.
+          group: Settings
+          label: max
+          type: int
+          variable: ranges.max
