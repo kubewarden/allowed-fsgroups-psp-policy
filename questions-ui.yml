@@ -20,18 +20,18 @@ questions:
   label: User ID Ranges
   show_if: rule=MustRunAs||rule=MayRunAs
   hide_input: true
-  type: map[
+  type: sequence[
   variable: ranges
-  subquestions:
+  sequence_questions:
     - default: 1000
       tooltip: Minimum UID range for fsgroup.
       group: Settings
       label: min
       type: int
-      variable: ranges.min
+      variable: min
     - default: 2000
       tooltip: Maximum UID range for fsgroup.
       group: Settings
       label: max
       type: int
-      variable: ranges.max
+      variable: max
