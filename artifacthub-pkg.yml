@@ -2,7 +2,7 @@
 version: 0.1.7
 name: allowed-fsgroups-psp
 displayName: Allowed Fs Groups PSP
-createdAt: '2023-01-19T15:46:21+02:00'
+createdAt: '2023-02-13T15:58:02+00:00'
 description: Replacement for the Kubernetes Pod Security Policy that controls the usage of fsGroup in the pod security context
 license: Apache-2.0
 homeURL: https://github.com/kubewarden/allowed-fsgroups-psp-policy
