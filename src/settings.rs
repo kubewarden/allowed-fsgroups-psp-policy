@@ -33,7 +33,7 @@ impl Display for Rule {
             Rule::MayRunAs(_) => "MayRunAs",
             Rule::RunAsAny => "RunAsAny",
         };
-        write!(f, "{}", rule)
+        write!(f, "{rule}")
     }
 }
 
