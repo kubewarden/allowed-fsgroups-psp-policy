@@ -98,7 +98,7 @@ fn validate_fs_group(fs_group: i64, ranges: Ranges) -> PolicyResponse {
     {
         PolicyResponse::Accept
     } else {
-        PolicyResponse::Reject(format!("fsGroup {} is not included in any range", fs_group))
+        PolicyResponse::Reject(format!("fsGroup {fs_group} is not included in any range"))
     }
 }
 
